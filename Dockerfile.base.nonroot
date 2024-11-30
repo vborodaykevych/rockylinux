@@ -1,0 +1,14 @@
+FROM mirror.gcr.io/rockylinux:9 AS updater
+
+# Update all packages and clean up
+RUN dnf update -y && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf /tmp/* /var/tmp/* && \
+    groupadd --system nonroot && \
+    useradd --system --no-create-home --gid nonroot --shell /sbin/nologin nonroot
+
+# Copy updated system to scratch
+FROM scratch
+COPY --from=updater / /
+USER nonroot
+CMD ["/bin/bash"]

@@ -1,0 +1,11 @@
+FROM mirror.gcr.io/rockylinux:9-minimal AS updater
+
+# Update all packages and clean up
+RUN microdnf update -y && \
+    microdnf clean all && \
+    rm -rf /var/cache/dnf
+
+# Copy updated system to scratch
+FROM scratch
+COPY --from=updater / /
+CMD ["/bin/bash"]

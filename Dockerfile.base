@@ -1,0 +1,11 @@
+FROM mirror.gcr.io/rockylinux:9 AS updater
+
+# Update all packages and clean up
+RUN dnf update -y && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+
+# Copy updated system to scratch
+FROM scratch
+COPY --from=updater / /
+CMD ["/bin/bash"]
