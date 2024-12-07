@@ -1,4 +1,4 @@
-FROM mirror.gcr.io/rockylinux:9 AS updater
+FROM rockylinux:9 AS updater
 
 # Update all packages and clean up
 RUN dnf update -y && \

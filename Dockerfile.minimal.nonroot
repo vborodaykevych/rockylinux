@@ -1,4 +1,4 @@
-FROM mirror.gcr.io/rockylinux:9-minimal AS updater
+FROM rockylinux:9-minimal AS updater
 
 # Update all packages and clean up
 RUN microdnf update -y && \
