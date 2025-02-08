@@ -130,7 +130,7 @@ jobs:
           echo $MINOR_VERSION > minor_version.txt
 
       - name: Upload Minor Version and TAG_SUFFIX
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: MINOR_VERSION
           path: minor_version.txt
