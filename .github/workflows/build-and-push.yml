@@ -130,6 +130,7 @@ jobs:
           echo $MINOR_VERSION > minor_version.txt
 
       - name: Upload Minor Version and TAG_SUFFIX
+        if: ${{ matrix.platform == 'amd64' && matrix.variant == 'base' && matrix.security == 'root' }}
         uses: actions/upload-artifact@v4
         with:
           name: MINOR_VERSION
