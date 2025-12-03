@@ -79,6 +79,14 @@ jobs:
             --tag $IMAGE_TAG \
             --load .
 
+      - name: Extract Minor Version
+        run: |
+          IMAGE_TAG="${{ secrets.DOCKER_USERNAME }}/rockylinux:${TAG_SUFFIX}"
+          echo "Extracting MINOR_VERSION from local image $IMAGE_TAG..."
+          MINOR_VERSION=$(docker run --rm $IMAGE_TAG cat /etc/os-release | grep VERSION_ID | cut -d '"' -f 2)
+          echo "Extracted MINOR_VERSION: $MINOR_VERSION"
+          echo $MINOR_VERSION > minor_version.txt
+
       - name: Extract Filesystem
         run: |
           IMAGE_TAG="${{ secrets.DOCKER_USERNAME }}/rockylinux:${TAG_SUFFIX}"
@@ -134,18 +142,6 @@ jobs:
             --sbom=true \
             --push .
 
-      - name: Extract Minor Version
-        id: extract_version
-        run: |
-          FINAL_TAG="${{ secrets.DOCKER_USERNAME }}/rockylinux:${TAG_SUFFIX}"
-          echo "Extracting MINOR_VERSION from $FINAL_TAG..."
-
-          # Extract MINOR_VERSION from /etc/os-release
-          MINOR_VERSION=$(docker run --rm $FINAL_TAG cat /etc/os-release | grep VERSION_ID | cut -d '"' -f 2)
-
-          echo "Extracted MINOR_VERSION: $MINOR_VERSION"
-          echo $MINOR_VERSION > minor_version.txt
-
       - name: Upload Minor Version
         if: ${{ matrix.platform == 'amd64' && matrix.variant == 'base' && matrix.security == 'root' }}
         uses: actions/upload-artifact@v4
@@ -183,45 +179,63 @@ jobs:
       - name: Create Version 10 Manifests (latest)
         run: |
           REPO="${{ secrets.DOCKER_USERNAME }}/rockylinux"
-          PLATFORMS="amd64 arm64 ppc64le s390x"
+
+          create_manifest() {
+            local tag=$1
+            shift
+            local sources="$@"
+            for i in 1 2 3 4 5; do
+              echo "Creating manifest ${tag} (attempt $i)..."
+              if docker buildx imagetools create --tag ${REPO}:${tag} ${sources}; then
+                return 0
+              fi
+              echo "Retry in 30 seconds..."
+              sleep 30
+            done
+            echo "Failed to create manifest ${tag}"
+            return 1
+          }
 
           # Base manifests: latest, 10, 10.x
           for TAG in "latest" "10" "${MINOR_VERSION_10}"; do
-            echo "Creating manifest ${TAG}..."
-            docker buildx imagetools create --tag ${REPO}:${TAG} \
-              ${REPO}:amd64 ${REPO}:arm64 ${REPO}:ppc64le ${REPO}:s390x
+            create_manifest "${TAG}" "${REPO}:amd64 ${REPO}:arm64 ${REPO}:ppc64le ${REPO}:s390x"
           done
 
           # Minimal manifests: latest-minimal, 10-minimal, 10.x-minimal
           for TAG in "latest-minimal" "10-minimal" "${MINOR_VERSION_10}-minimal"; do
-            echo "Creating manifest ${TAG}..."
-            docker buildx imagetools create --tag ${REPO}:${TAG} \
-              ${REPO}:amd64-minimal ${REPO}:arm64-minimal ${REPO}:ppc64le-minimal ${REPO}:s390x-minimal
+            create_manifest "${TAG}" "${REPO}:amd64-minimal ${REPO}:arm64-minimal ${REPO}:ppc64le-minimal ${REPO}:s390x-minimal"
           done
 
           # Nonroot manifests: nonroot, nonroot-minimal
-          echo "Creating manifest nonroot..."
-          docker buildx imagetools create --tag ${REPO}:nonroot \
-            ${REPO}:amd64-nonroot ${REPO}:arm64-nonroot ${REPO}:ppc64le-nonroot ${REPO}:s390x-nonroot
-
-          echo "Creating manifest nonroot-minimal..."
-          docker buildx imagetools create --tag ${REPO}:nonroot-minimal \
-            ${REPO}:amd64-minimal-nonroot ${REPO}:arm64-minimal-nonroot ${REPO}:ppc64le-minimal-nonroot ${REPO}:s390x-minimal-nonroot
+          create_manifest "nonroot" "${REPO}:amd64-nonroot ${REPO}:arm64-nonroot ${REPO}:ppc64le-nonroot ${REPO}:s390x-nonroot"
+          create_manifest "nonroot-minimal" "${REPO}:amd64-minimal-nonroot ${REPO}:arm64-minimal-nonroot ${REPO}:ppc64le-minimal-nonroot ${REPO}:s390x-minimal-nonroot"
 
       - name: Create Version 9 Manifests
         run: |
           REPO="${{ secrets.DOCKER_USERNAME }}/rockylinux"
 
+          create_manifest() {
+            local tag=$1
+            shift
+            local sources="$@"
+            for i in 1 2 3 4 5; do
+              echo "Creating manifest ${tag} (attempt $i)..."
+              if docker buildx imagetools create --tag ${REPO}:${tag} ${sources}; then
+                return 0
+              fi
+              echo "Retry in 30 seconds..."
+              sleep 30
+            done
+            echo "Failed to create manifest ${tag}"
+            return 1
+          }
+
           # Base manifests: 9, 9.x
           for TAG in "9" "${MINOR_VERSION_9}"; do
-            echo "Creating manifest ${TAG}..."
-            docker buildx imagetools create --tag ${REPO}:${TAG} \
-              ${REPO}:9-amd64 ${REPO}:9-arm64 ${REPO}:9-ppc64le ${REPO}:9-s390x
+            create_manifest "${TAG}" "${REPO}:9-amd64 ${REPO}:9-arm64 ${REPO}:9-ppc64le ${REPO}:9-s390x"
           done
 
           # Minimal manifests: 9-minimal, 9.x-minimal
           for TAG in "9-minimal" "${MINOR_VERSION_9}-minimal"; do
-            echo "Creating manifest ${TAG}..."
-            docker buildx imagetools create --tag ${REPO}:${TAG} \
-              ${REPO}:9-amd64-minimal ${REPO}:9-arm64-minimal ${REPO}:9-ppc64le-minimal ${REPO}:9-s390x-minimal
+            create_manifest "${TAG}" "${REPO}:9-amd64-minimal ${REPO}:9-arm64-minimal ${REPO}:9-ppc64le-minimal ${REPO}:9-s390x-minimal"
           done
