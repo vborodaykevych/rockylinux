@@ -13,6 +13,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        version:
+          - 9
+          - 10
         platform:
           - amd64
           - arm64
@@ -26,7 +29,7 @@ jobs:
           - nonroot
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -43,10 +46,15 @@ jobs:
       - name: Set TAG_SUFFIX
         id: tag_suffix
         run: |
+          VERSION_PREFIX=""
+          if [[ "${{ matrix.version }}" != "10" ]]; then
+            VERSION_PREFIX="${{ matrix.version }}-"
+          fi
+
           if [[ "${{ matrix.variant }}" == "base" && "${{ matrix.security }}" == "root" ]]; then
-            TAG_SUFFIX="${{ matrix.platform }}"
+            TAG_SUFFIX="${VERSION_PREFIX}${{ matrix.platform }}"
           else
-            TAG_SUFFIX="${{ matrix.platform }}${{ matrix.variant == 'minimal' && '-minimal' || '' }}${{ matrix.security == 'nonroot' && '-nonroot' || '' }}"
+            TAG_SUFFIX="${VERSION_PREFIX}${{ matrix.platform }}${{ matrix.variant == 'minimal' && '-minimal' || '' }}${{ matrix.security == 'nonroot' && '-nonroot' || '' }}"
           fi
           echo "TAG_SUFFIX=$TAG_SUFFIX" >> $GITHUB_ENV
 
@@ -59,6 +67,7 @@ jobs:
           docker buildx build \
             --platform linux/${{ matrix.platform }} \
             --file $DOCKERFILE \
+            --build-arg VERSION=${{ matrix.version }} \
             --tag $IMAGE_TAG \
             --load .
 
@@ -129,11 +138,11 @@ jobs:
           echo "Extracted MINOR_VERSION: $MINOR_VERSION"
           echo $MINOR_VERSION > minor_version.txt
 
-      - name: Upload Minor Version and TAG_SUFFIX
+      - name: Upload Minor Version
         if: ${{ matrix.platform == 'amd64' && matrix.variant == 'base' && matrix.security == 'root' }}
         uses: actions/upload-artifact@v4
         with:
-          name: MINOR_VERSION
+          name: MINOR_VERSION_${{ matrix.version }}
           path: minor_version.txt
 
   create_manifest:
@@ -141,19 +150,18 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Download MINOR_VERSION Artifact
+      - name: Download Minor Version Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: MINOR_VERSION
+          pattern: MINOR_VERSION_*
 
-      - name: Set MINOR_VERSION and MAJOR_VERSION Variables
+      - name: Set Version Variables
         run: |
-          MINOR_VERSION=$(cat minor_version.txt)
-          MAJOR_VERSION=$(echo "${MINOR_VERSION}" | cut -d'.' -f1)
-          echo "MINOR_VERSION=$MINOR_VERSION" >> $GITHUB_ENV
-          echo "MAJOR_VERSION=$MAJOR_VERSION" >> $GITHUB_ENV
-          echo "Using MINOR_VERSION=$MINOR_VERSION and MAJOR_VERSION=$MAJOR_VERSION"
-        shell: bash
+          MINOR_VERSION_9=$(cat MINOR_VERSION_9/minor_version.txt)
+          MINOR_VERSION_10=$(cat MINOR_VERSION_10/minor_version.txt)
+          echo "MINOR_VERSION_9=$MINOR_VERSION_9" >> $GITHUB_ENV
+          echo "MINOR_VERSION_10=$MINOR_VERSION_10" >> $GITHUB_ENV
+          echo "Using MINOR_VERSION_9=$MINOR_VERSION_9 and MINOR_VERSION_10=$MINOR_VERSION_10"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -164,31 +172,48 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Create and Push Multiarch Manifests
+      - name: Create Version 10 Manifests (latest)
         run: |
-          echo "Creating multiarch manifests for all variant and security combinations..."
-          VARIANTS=("base" "minimal")
-          VERSIONS=("${MAJOR_VERSION}" "latest" "${MINOR_VERSION}")
+          REPO="${{ secrets.DOCKER_USERNAME }}/rockylinux"
+          PLATFORMS="amd64 arm64 ppc64le s390x"
 
-          for VARIANT in "${VARIANTS[@]}"; do
-            TAG_SUFFIX=""
-            [ "$VARIANT" == "minimal" ] && TAG_SUFFIX="-minimal"
+          # Base manifests: latest, 10, 10.x
+          for TAG in "latest" "10" "${MINOR_VERSION_10}"; do
+            echo "Creating manifest ${TAG}..."
+            docker buildx imagetools create --tag ${REPO}:${TAG} \
+              ${REPO}:amd64 ${REPO}:arm64 ${REPO}:ppc64le ${REPO}:s390x
+          done
 
-            echo "Creating multiarch manifest for rockylinux:nonroot${TAG_SUFFIX}..."
-            docker buildx imagetools create \
-              --tag ${{ secrets.DOCKER_USERNAME }}/rockylinux:nonroot${TAG_SUFFIX} \
-              ${{ secrets.DOCKER_USERNAME }}/rockylinux:amd64${TAG_SUFFIX}-nonroot \
-              ${{ secrets.DOCKER_USERNAME }}/rockylinux:arm64${TAG_SUFFIX}-nonroot \
-              ${{ secrets.DOCKER_USERNAME }}/rockylinux:ppc64le${TAG_SUFFIX}-nonroot \
-              ${{ secrets.DOCKER_USERNAME }}/rockylinux:s390x${TAG_SUFFIX}-nonroot
+          # Minimal manifests: latest-minimal, 10-minimal, 10.x-minimal
+          for TAG in "latest-minimal" "10-minimal" "${MINOR_VERSION_10}-minimal"; do
+            echo "Creating manifest ${TAG}..."
+            docker buildx imagetools create --tag ${REPO}:${TAG} \
+              ${REPO}:amd64-minimal ${REPO}:arm64-minimal ${REPO}:ppc64le-minimal ${REPO}:s390x-minimal
+          done
 
-            for VERSION in "${VERSIONS[@]}"; do
-              echo "Creating multiarch manifest for rockylinux:${VERSION}${TAG_SUFFIX}..."
-              docker buildx imagetools create \
-                --tag ${{ secrets.DOCKER_USERNAME }}/rockylinux:${VERSION}${TAG_SUFFIX} \
-                ${{ secrets.DOCKER_USERNAME }}/rockylinux:amd64${TAG_SUFFIX} \
-                ${{ secrets.DOCKER_USERNAME }}/rockylinux:arm64${TAG_SUFFIX} \
-                ${{ secrets.DOCKER_USERNAME }}/rockylinux:ppc64le${TAG_SUFFIX} \
-                ${{ secrets.DOCKER_USERNAME }}/rockylinux:s390x${TAG_SUFFIX}
-            done
+          # Nonroot manifests: nonroot, nonroot-minimal
+          echo "Creating manifest nonroot..."
+          docker buildx imagetools create --tag ${REPO}:nonroot \
+            ${REPO}:amd64-nonroot ${REPO}:arm64-nonroot ${REPO}:ppc64le-nonroot ${REPO}:s390x-nonroot
+
+          echo "Creating manifest nonroot-minimal..."
+          docker buildx imagetools create --tag ${REPO}:nonroot-minimal \
+            ${REPO}:amd64-minimal-nonroot ${REPO}:arm64-minimal-nonroot ${REPO}:ppc64le-minimal-nonroot ${REPO}:s390x-minimal-nonroot
+
+      - name: Create Version 9 Manifests
+        run: |
+          REPO="${{ secrets.DOCKER_USERNAME }}/rockylinux"
+
+          # Base manifests: 9, 9.x
+          for TAG in "9" "${MINOR_VERSION_9}"; do
+            echo "Creating manifest ${TAG}..."
+            docker buildx imagetools create --tag ${REPO}:${TAG} \
+              ${REPO}:9-amd64 ${REPO}:9-arm64 ${REPO}:9-ppc64le ${REPO}:9-s390x
+          done
+
+          # Minimal manifests: 9-minimal, 9.x-minimal
+          for TAG in "9-minimal" "${MINOR_VERSION_9}-minimal"; do
+            echo "Creating manifest ${TAG}..."
+            docker buildx imagetools create --tag ${REPO}:${TAG} \
+              ${REPO}:9-amd64-minimal ${REPO}:9-arm64-minimal ${REPO}:9-ppc64le-minimal ${REPO}:9-s390x-minimal
           done
