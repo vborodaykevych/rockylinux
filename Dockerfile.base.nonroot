@@ -1,5 +1,6 @@
 ARG VERSION=10
-FROM rockylinux:${VERSION} AS updater
+ARG IMAGE=rockylinux/rockylinux
+FROM ${IMAGE}:${VERSION} AS updater
 
 # Update all packages and clean up
 RUN dnf update -y && \
