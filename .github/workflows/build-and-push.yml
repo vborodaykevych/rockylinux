@@ -63,11 +63,19 @@ jobs:
           DOCKERFILE="Dockerfile.${{ matrix.variant }}${{ matrix.security == 'nonroot' && '.nonroot' || '' }}"
           IMAGE_TAG="${{ secrets.DOCKER_USERNAME }}/rockylinux:${TAG_SUFFIX}"
 
+          # Version 9 uses rockylinux, version 10 uses rockylinux/rockylinux
+          if [[ "${{ matrix.version }}" == "9" ]]; then
+            BASE_IMAGE="rockylinux"
+          else
+            BASE_IMAGE="rockylinux/rockylinux"
+          fi
+
           echo "Building initial image $IMAGE_TAG using $DOCKERFILE..."
           docker buildx build \
             --platform linux/${{ matrix.platform }} \
             --file $DOCKERFILE \
             --build-arg VERSION=${{ matrix.version }} \
+            --build-arg IMAGE=$BASE_IMAGE \
             --tag $IMAGE_TAG \
             --load .
 
