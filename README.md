@@ -24,26 +24,35 @@ The following tags and variants are supported:
 - `minimal`: A slimmed-down version of the image with essential components only.
 - `nonroot`: Security-focused images where processes run as non-root.
 
-### Example Tags:
-- `latest`: Base image with the latest updates.
-- `9`: Base image for Rocky Linux version 9.
-- `<MINOR_VERSION>`: Specific minor version tag (e.g., `9.5`).
-- `latest-minimal`, `9-minimal`, `<MINOR_VERSION>-minimal`: Corresponding minimal variants.
+### Rocky Linux 10 (default):
+- `latest`, `10`, `10.x`: Base image with the latest updates.
+- `latest-minimal`, `10-minimal`, `10.x-minimal`: Minimal variants.
+- `nonroot`, `nonroot-minimal`: Non-root variants.
 - `amd64`, `arm64`, `ppc64le`, `s390x`: Architecture-specific tags.
+- `amd64-minimal`, `amd64-nonroot`, `amd64-minimal-nonroot`: Architecture + variant tags.
+
+### Rocky Linux 9:
+- `9`, `9.x`: Base image for Rocky Linux 9.
+- `9-minimal`, `9.x-minimal`: Minimal variants.
+- `9-amd64`, `9-arm64`, `9-ppc64le`, `9-s390x`: Architecture-specific tags.
+- `9-amd64-minimal`, `9-amd64-nonroot`, `9-amd64-minimal-nonroot`: Architecture + variant tags.
 
 ## Getting Started
 
 Pull the desired image from Docker Hub:
 
 ```bash
-# Pull the latest base image
+# Pull the latest base image (Rocky Linux 10)
 docker pull uacontainers/rockylinux:latest
 
-# Pull a minimal image for arm64 architecture
-docker pull uacontainers/rockylinux:arm64-minimal
+# Pull Rocky Linux 9
+docker pull uacontainers/rockylinux:9
 
-# Pull a nonroot image for ppc64le
-docker pull uacontainers/rockylinux:ppc64le-nonroot
+# Pull a minimal image
+docker pull uacontainers/rockylinux:latest-minimal
+
+# Pull a nonroot image
+docker pull uacontainers/rockylinux:nonroot
 ```
 
 ## Usage
@@ -57,7 +66,7 @@ docker run --rm -it uacontainers/rockylinux:latest
 Or, for minimal and nonroot images:
 
 ```bash
-docker run --rm -it uacontainers/rockylinux:minimal-nonroot
+docker run --rm -it uacontainers/rockylinux:nonroot-minimal
 ```
 
 ## Architecture Support

@@ -1,4 +1,5 @@
-FROM rockylinux:9-minimal AS updater
+ARG VERSION=10
+FROM rockylinux:${VERSION}-minimal AS updater
 
 # Update all packages and clean up
 RUN microdnf update -y && \
