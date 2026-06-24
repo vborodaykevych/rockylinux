@@ -1,14 +1,45 @@
 name: Build and Push Rocky Linux Images
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
   schedule:
     - cron: "0 0 * * *" # Daily builds at midnight UTC
 
+permissions:
+  contents: read
+
+concurrency:
+  group: rockylinux-images
+  cancel-in-progress: false
+
 jobs:
+  versions:
+    name: Detect Rocky Linux minor versions
+    runs-on: ubuntu-latest
+    outputs:
+      minor9: ${{ steps.detect.outputs.minor9 }}
+      minor10: ${{ steps.detect.outputs.minor10 }}
+    steps:
+      - name: Detect current minor versions
+        id: detect
+        run: |
+          set -euo pipefail
+
+          MINOR_VERSION_9="$(docker run --rm rockylinux:9 sh -c '. /etc/os-release; printf "%s" "$VERSION_ID"')"
+          MINOR_VERSION_10="$(docker run --rm rockylinux/rockylinux:10 sh -c '. /etc/os-release; printf "%s" "$VERSION_ID"')"
+
+          echo "minor9=${MINOR_VERSION_9}" >> "$GITHUB_OUTPUT"
+          echo "minor10=${MINOR_VERSION_10}" >> "$GITHUB_OUTPUT"
+
+          echo "Rocky Linux 9 minor version: ${MINOR_VERSION_9}"
+          echo "Rocky Linux 10 minor version: ${MINOR_VERSION_10}"
+
   build:
+    name: Build ${{ matrix.version }} / ${{ matrix.platform }} / ${{ matrix.variant }} / ${{ matrix.security }}
+    needs: versions
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -27,25 +58,27 @@ jobs:
         security:
           - root
           - nonroot
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Set TAG_SUFFIX
-        id: tag_suffix
+      - name: Set build variables
         run: |
+          set -euo pipefail
+
           VERSION_PREFIX=""
           if [[ "${{ matrix.version }}" != "10" ]]; then
             VERSION_PREFIX="${{ matrix.version }}-"
@@ -56,186 +89,172 @@ jobs:
           else
             TAG_SUFFIX="${VERSION_PREFIX}${{ matrix.platform }}${{ matrix.variant == 'minimal' && '-minimal' || '' }}${{ matrix.security == 'nonroot' && '-nonroot' || '' }}"
           fi
-          echo "TAG_SUFFIX=$TAG_SUFFIX" >> $GITHUB_ENV
 
-      - name: Build Initial Image
-        run: |
           DOCKERFILE="Dockerfile.${{ matrix.variant }}${{ matrix.security == 'nonroot' && '.nonroot' || '' }}"
-          IMAGE_TAG="${{ secrets.DOCKER_USERNAME }}/rockylinux:${TAG_SUFFIX}"
 
-          # Version 9 uses rockylinux, version 10 uses rockylinux/rockylinux
           if [[ "${{ matrix.version }}" == "9" ]]; then
             BASE_IMAGE="rockylinux"
           else
             BASE_IMAGE="rockylinux/rockylinux"
           fi
 
-          echo "Building initial image $IMAGE_TAG using $DOCKERFILE..."
-          docker buildx build \
-            --platform linux/${{ matrix.platform }} \
-            --file $DOCKERFILE \
-            --build-arg VERSION=${{ matrix.version }} \
-            --build-arg IMAGE=$BASE_IMAGE \
-            --tag $IMAGE_TAG \
-            --load .
-
-      - name: Extract Minor Version
-        run: |
           IMAGE_TAG="${{ secrets.DOCKER_USERNAME }}/rockylinux:${TAG_SUFFIX}"
-          echo "Extracting MINOR_VERSION from local image $IMAGE_TAG..."
-          MINOR_VERSION=$(docker run --rm $IMAGE_TAG cat /etc/os-release | grep VERSION_ID | cut -d '"' -f 2)
-          echo "Extracted MINOR_VERSION: $MINOR_VERSION"
-          echo $MINOR_VERSION > minor_version.txt
+          CACHE_SCOPE="rockylinux-${{ matrix.version }}-${{ matrix.platform }}-${{ matrix.variant }}-${{ matrix.security }}"
 
-      - name: Extract Filesystem
+          echo "TAG_SUFFIX=${TAG_SUFFIX}" >> "$GITHUB_ENV"
+          echo "DOCKERFILE=${DOCKERFILE}" >> "$GITHUB_ENV"
+          echo "BASE_IMAGE=${BASE_IMAGE}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
+          echo "CACHE_SCOPE=${CACHE_SCOPE}" >> "$GITHUB_ENV"
+
+          echo "Using Dockerfile: ${DOCKERFILE}"
+          echo "Using base image: ${BASE_IMAGE}:${{ matrix.version }}"
+          echo "Publishing arch tag: ${IMAGE_TAG}"
+
+      - name: Build and push architecture image
         run: |
-          IMAGE_TAG="${{ secrets.DOCKER_USERNAME }}/rockylinux:${TAG_SUFFIX}"
-          echo "Extracting filesystem for $IMAGE_TAG..."
-          docker save $IMAGE_TAG -o layer.tar
+          set -euo pipefail
 
-          mkdir -p extracted /tmp/rootfs
-          tar -xf layer.tar -C extracted
-
-          for layer in extracted/blobs/sha256/*; do
-            if file "$layer" | grep -q 'tar archive'; then
-              tar --skip-old-files -xf "$layer" -C /tmp/rootfs
-            fi
-          done
-
-          # Fix permissions recursively
-          echo "Adjusting permissions in /tmp/rootfs..."
-          chmod -R +r /tmp/rootfs || true
-
-          # Verify the filesystem to ensure critical files exist
-          echo "Verifying extracted filesystem..."
-          if [ ! -f "/tmp/rootfs/bin/bash" ]; then
-            echo "Error: /bin/bash not found in the reconstructed filesystem!"
-            exit 1
-          fi
-
-          # Repackage filesystem into layer.tar.xz
-          echo "Repackaging filesystem into layer.tar.xz..."
-          tar -cf layer.tar -C /tmp/rootfs .
-          xz -z layer.tar
-
-      - name: Build Final Image
-        run: |
-          FINAL_DOCKERFILE=$(cat <<EOF
-          FROM scratch
-          ADD layer.tar.xz /
-          ${{
-            matrix.security == 'nonroot' && 'USER nonroot' || ''
-          }}
-          CMD ["/bin/bash"]
-          EOF
-          )
-
-          echo "$FINAL_DOCKERFILE" > FinalDockerfile
-
-          FINAL_TAG="${{ secrets.DOCKER_USERNAME }}/rockylinux:${TAG_SUFFIX}"
-          echo "Building final image $FINAL_TAG..."
           docker buildx build \
-            --platform linux/${{ matrix.platform }} \
-            --file FinalDockerfile \
-            --tag $FINAL_TAG \
+            --platform "linux/${{ matrix.platform }}" \
+            --file "$DOCKERFILE" \
+            --build-arg "VERSION=${{ matrix.version }}" \
+            --build-arg "IMAGE=$BASE_IMAGE" \
+            --tag "$IMAGE_TAG" \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.version=${{ matrix.version }}" \
             --provenance=true \
             --sbom=true \
-            --push .
+            --cache-from "type=gha,scope=${CACHE_SCOPE}" \
+            --cache-to "type=gha,mode=max,scope=${CACHE_SCOPE}" \
+            --push \
+            .
 
-      - name: Upload Minor Version
-        if: ${{ matrix.platform == 'amd64' && matrix.variant == 'base' && matrix.security == 'root' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: MINOR_VERSION_${{ matrix.version }}
-          path: minor_version.txt
+      - name: Inspect pushed architecture image
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "$IMAGE_TAG"
+
+      - name: Smoke test amd64 image
+        if: ${{ matrix.platform == 'amd64' }}
+        run: |
+          set -euo pipefail
+          docker run --rm "$IMAGE_TAG" /bin/bash -lc 'id && . /etc/os-release && echo "$PRETTY_NAME"'
 
   create_manifest:
-    name: Create Multiarch Manifest
-    needs: build
+    name: Create multiarch manifests
+    needs:
+      - versions
+      - build
     runs-on: ubuntu-latest
+    env:
+      REPO: ${{ secrets.DOCKER_USERNAME }}/rockylinux
+      MINOR_VERSION_9: ${{ needs.versions.outputs.minor9 }}
+      MINOR_VERSION_10: ${{ needs.versions.outputs.minor10 }}
+
     steps:
-      - name: Download Minor Version Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: MINOR_VERSION_*
-
-      - name: Set Version Variables
-        run: |
-          MINOR_VERSION_9=$(cat MINOR_VERSION_9/minor_version.txt)
-          MINOR_VERSION_10=$(cat MINOR_VERSION_10/minor_version.txt)
-          echo "MINOR_VERSION_9=$MINOR_VERSION_9" >> $GITHUB_ENV
-          echo "MINOR_VERSION_10=$MINOR_VERSION_10" >> $GITHUB_ENV
-          echo "Using MINOR_VERSION_9=$MINOR_VERSION_9 and MINOR_VERSION_10=$MINOR_VERSION_10"
-
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Create Version 10 Manifests (latest)
+      - name: Create and verify manifests
         run: |
-          REPO="${{ secrets.DOCKER_USERNAME }}/rockylinux"
+          set -euo pipefail
 
           create_manifest() {
-            local tag=$1
+            local tag="$1"
             shift
-            local sources="$@"
-            for i in 1 2 3 4 5; do
-              echo "Creating manifest ${tag} (attempt $i)..."
-              if docker buildx imagetools create --tag ${REPO}:${tag} ${sources}; then
+
+            for attempt in 1 2 3 4 5; do
+              echo "Creating manifest ${REPO}:${tag} (attempt ${attempt})..."
+
+              if docker buildx imagetools create --tag "${REPO}:${tag}" "$@"; then
+                docker buildx imagetools inspect "${REPO}:${tag}"
                 return 0
               fi
-              echo "Retry in 30 seconds..."
+
+              echo "Manifest creation failed for ${REPO}:${tag}; retrying in 30 seconds..."
               sleep 30
             done
-            echo "Failed to create manifest ${tag}"
+
+            echo "Failed to create manifest ${REPO}:${tag}"
             return 1
           }
 
-          # Base manifests: latest, 10, 10.x
-          for TAG in "latest" "10" "${MINOR_VERSION_10}"; do
-            create_manifest "${TAG}" "${REPO}:amd64 ${REPO}:arm64 ${REPO}:ppc64le ${REPO}:s390x"
+          # Rocky Linux 10 base manifests.
+          for tag in "latest" "10" "${MINOR_VERSION_10}"; do
+            create_manifest "$tag" \
+              "${REPO}:amd64" \
+              "${REPO}:arm64" \
+              "${REPO}:ppc64le" \
+              "${REPO}:s390x"
           done
 
-          # Minimal manifests: latest-minimal, 10-minimal, 10.x-minimal
-          for TAG in "latest-minimal" "10-minimal" "${MINOR_VERSION_10}-minimal"; do
-            create_manifest "${TAG}" "${REPO}:amd64-minimal ${REPO}:arm64-minimal ${REPO}:ppc64le-minimal ${REPO}:s390x-minimal"
+          # Rocky Linux 10 minimal manifests.
+          for tag in "latest-minimal" "10-minimal" "${MINOR_VERSION_10}-minimal"; do
+            create_manifest "$tag" \
+              "${REPO}:amd64-minimal" \
+              "${REPO}:arm64-minimal" \
+              "${REPO}:ppc64le-minimal" \
+              "${REPO}:s390x-minimal"
           done
 
-          # Nonroot manifests: nonroot, nonroot-minimal
-          create_manifest "nonroot" "${REPO}:amd64-nonroot ${REPO}:arm64-nonroot ${REPO}:ppc64le-nonroot ${REPO}:s390x-nonroot"
-          create_manifest "nonroot-minimal" "${REPO}:amd64-minimal-nonroot ${REPO}:arm64-minimal-nonroot ${REPO}:ppc64le-minimal-nonroot ${REPO}:s390x-minimal-nonroot"
-
-      - name: Create Version 9 Manifests
-        run: |
-          REPO="${{ secrets.DOCKER_USERNAME }}/rockylinux"
-
-          create_manifest() {
-            local tag=$1
-            shift
-            local sources="$@"
-            for i in 1 2 3 4 5; do
-              echo "Creating manifest ${tag} (attempt $i)..."
-              if docker buildx imagetools create --tag ${REPO}:${tag} ${sources}; then
-                return 0
-              fi
-              echo "Retry in 30 seconds..."
-              sleep 30
-            done
-            echo "Failed to create manifest ${tag}"
-            return 1
-          }
-
-          # Base manifests: 9, 9.x
-          for TAG in "9" "${MINOR_VERSION_9}"; do
-            create_manifest "${TAG}" "${REPO}:9-amd64 ${REPO}:9-arm64 ${REPO}:9-ppc64le ${REPO}:9-s390x"
+          # Rocky Linux 10 nonroot manifests.
+          for tag in "nonroot" "10-nonroot" "${MINOR_VERSION_10}-nonroot"; do
+            create_manifest "$tag" \
+              "${REPO}:amd64-nonroot" \
+              "${REPO}:arm64-nonroot" \
+              "${REPO}:ppc64le-nonroot" \
+              "${REPO}:s390x-nonroot"
           done
 
-          # Minimal manifests: 9-minimal, 9.x-minimal
-          for TAG in "9-minimal" "${MINOR_VERSION_9}-minimal"; do
-            create_manifest "${TAG}" "${REPO}:9-amd64-minimal ${REPO}:9-arm64-minimal ${REPO}:9-ppc64le-minimal ${REPO}:9-s390x-minimal"
+          # Rocky Linux 10 minimal nonroot manifests.
+          for tag in "nonroot-minimal" "10-minimal-nonroot" "${MINOR_VERSION_10}-minimal-nonroot"; do
+            create_manifest "$tag" \
+              "${REPO}:amd64-minimal-nonroot" \
+              "${REPO}:arm64-minimal-nonroot" \
+              "${REPO}:ppc64le-minimal-nonroot" \
+              "${REPO}:s390x-minimal-nonroot"
+          done
+
+          # Rocky Linux 9 base manifests.
+          for tag in "9" "${MINOR_VERSION_9}"; do
+            create_manifest "$tag" \
+              "${REPO}:9-amd64" \
+              "${REPO}:9-arm64" \
+              "${REPO}:9-ppc64le" \
+              "${REPO}:9-s390x"
+          done
+
+          # Rocky Linux 9 minimal manifests.
+          for tag in "9-minimal" "${MINOR_VERSION_9}-minimal"; do
+            create_manifest "$tag" \
+              "${REPO}:9-amd64-minimal" \
+              "${REPO}:9-arm64-minimal" \
+              "${REPO}:9-ppc64le-minimal" \
+              "${REPO}:9-s390x-minimal"
+          done
+
+          # Rocky Linux 9 nonroot manifests.
+          for tag in "9-nonroot" "${MINOR_VERSION_9}-nonroot"; do
+            create_manifest "$tag" \
+              "${REPO}:9-amd64-nonroot" \
+              "${REPO}:9-arm64-nonroot" \
+              "${REPO}:9-ppc64le-nonroot" \
+              "${REPO}:9-s390x-nonroot"
+          done
+
+          # Rocky Linux 9 minimal nonroot manifests.
+          for tag in "9-minimal-nonroot" "${MINOR_VERSION_9}-minimal-nonroot"; do
+            create_manifest "$tag" \
+              "${REPO}:9-amd64-minimal-nonroot" \
+              "${REPO}:9-arm64-minimal-nonroot" \
+              "${REPO}:9-ppc64le-minimal-nonroot" \
+              "${REPO}:9-s390x-minimal-nonroot"
           done
