@@ -28,7 +28,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          MINOR_VERSION_9="$(docker run --rm rockylinux:9 sh -c '. /etc/os-release; printf "%s" "$VERSION_ID"')"
+          # library/rockylinux:9 is no longer updated (frozen at 9.3), but the builds
+          # run dnf update; update rocky-release first so VERSION_ID matches the
+          # content of the built images.
+          MINOR_VERSION_9="$(docker run --rm rockylinux:9 sh -c 'dnf -y -q update rocky-release >/dev/null && . /etc/os-release && printf "%s" "$VERSION_ID"')"
           MINOR_VERSION_10="$(docker run --rm rockylinux/rockylinux:10 sh -c '. /etc/os-release; printf "%s" "$VERSION_ID"')"
 
           echo "minor9=${MINOR_VERSION_9}" >> "$GITHUB_OUTPUT"
