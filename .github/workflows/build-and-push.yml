@@ -170,94 +170,98 @@ jobs:
         run: |
           set -euo pipefail
 
-          create_manifest() {
-            local tag="$1"
+          create_manifest_set() {
+            local verify_ref="$1"
             shift
 
             for attempt in 1 2 3 4 5; do
-              echo "Creating manifest ${REPO}:${tag} (attempt ${attempt})..."
+              echo "Creating manifest set (attempt ${attempt}); verifying ${verify_ref}..."
 
-              if docker buildx imagetools create --tag "${REPO}:${tag}" "$@"; then
-                docker buildx imagetools inspect "${REPO}:${tag}"
+              if docker buildx imagetools create "$@"; then
+                docker buildx imagetools inspect "${verify_ref}"
                 return 0
               fi
 
-              echo "Manifest creation failed for ${REPO}:${tag}; retrying in 30 seconds..."
+              echo "Manifest set creation failed; retrying in 30 seconds..."
               sleep 30
             done
 
-            echo "Failed to create manifest ${REPO}:${tag}"
+            echo "Failed to create manifest set"
             return 1
           }
 
           # Rocky Linux 10 base manifests.
-          for tag in "latest" "10" "${MINOR_VERSION_10}"; do
-            create_manifest "$tag" \
-              "${REPO}:amd64" \
-              "${REPO}:arm64" \
-              "${REPO}:ppc64le" \
-              "${REPO}:s390x"
-          done
+          create_manifest_set "${REPO}:latest" \
+            --tag "${REPO}:latest" \
+            --tag "${REPO}:10" \
+            --tag "${REPO}:${MINOR_VERSION_10}" \
+            "${REPO}:amd64" \
+            "${REPO}:arm64" \
+            "${REPO}:ppc64le" \
+            "${REPO}:s390x"
 
           # Rocky Linux 10 minimal manifests.
-          for tag in "latest-minimal" "10-minimal" "${MINOR_VERSION_10}-minimal"; do
-            create_manifest "$tag" \
-              "${REPO}:amd64-minimal" \
-              "${REPO}:arm64-minimal" \
-              "${REPO}:ppc64le-minimal" \
-              "${REPO}:s390x-minimal"
-          done
+          create_manifest_set "${REPO}:latest-minimal" \
+            --tag "${REPO}:latest-minimal" \
+            --tag "${REPO}:10-minimal" \
+            --tag "${REPO}:${MINOR_VERSION_10}-minimal" \
+            "${REPO}:amd64-minimal" \
+            "${REPO}:arm64-minimal" \
+            "${REPO}:ppc64le-minimal" \
+            "${REPO}:s390x-minimal"
 
           # Rocky Linux 10 nonroot manifests.
-          for tag in "nonroot" "10-nonroot" "${MINOR_VERSION_10}-nonroot"; do
-            create_manifest "$tag" \
-              "${REPO}:amd64-nonroot" \
-              "${REPO}:arm64-nonroot" \
-              "${REPO}:ppc64le-nonroot" \
-              "${REPO}:s390x-nonroot"
-          done
+          create_manifest_set "${REPO}:nonroot" \
+            --tag "${REPO}:nonroot" \
+            --tag "${REPO}:10-nonroot" \
+            --tag "${REPO}:${MINOR_VERSION_10}-nonroot" \
+            "${REPO}:amd64-nonroot" \
+            "${REPO}:arm64-nonroot" \
+            "${REPO}:ppc64le-nonroot" \
+            "${REPO}:s390x-nonroot"
 
           # Rocky Linux 10 minimal nonroot manifests.
-          for tag in "nonroot-minimal" "10-minimal-nonroot" "${MINOR_VERSION_10}-minimal-nonroot"; do
-            create_manifest "$tag" \
-              "${REPO}:amd64-minimal-nonroot" \
-              "${REPO}:arm64-minimal-nonroot" \
-              "${REPO}:ppc64le-minimal-nonroot" \
-              "${REPO}:s390x-minimal-nonroot"
-          done
+          create_manifest_set "${REPO}:nonroot-minimal" \
+            --tag "${REPO}:nonroot-minimal" \
+            --tag "${REPO}:10-minimal-nonroot" \
+            --tag "${REPO}:${MINOR_VERSION_10}-minimal-nonroot" \
+            "${REPO}:amd64-minimal-nonroot" \
+            "${REPO}:arm64-minimal-nonroot" \
+            "${REPO}:ppc64le-minimal-nonroot" \
+            "${REPO}:s390x-minimal-nonroot"
 
           # Rocky Linux 9 base manifests.
-          for tag in "9" "${MINOR_VERSION_9}"; do
-            create_manifest "$tag" \
-              "${REPO}:9-amd64" \
-              "${REPO}:9-arm64" \
-              "${REPO}:9-ppc64le" \
-              "${REPO}:9-s390x"
-          done
+          create_manifest_set "${REPO}:9" \
+            --tag "${REPO}:9" \
+            --tag "${REPO}:${MINOR_VERSION_9}" \
+            "${REPO}:9-amd64" \
+            "${REPO}:9-arm64" \
+            "${REPO}:9-ppc64le" \
+            "${REPO}:9-s390x"
 
           # Rocky Linux 9 minimal manifests.
-          for tag in "9-minimal" "${MINOR_VERSION_9}-minimal"; do
-            create_manifest "$tag" \
-              "${REPO}:9-amd64-minimal" \
-              "${REPO}:9-arm64-minimal" \
-              "${REPO}:9-ppc64le-minimal" \
-              "${REPO}:9-s390x-minimal"
-          done
+          create_manifest_set "${REPO}:9-minimal" \
+            --tag "${REPO}:9-minimal" \
+            --tag "${REPO}:${MINOR_VERSION_9}-minimal" \
+            "${REPO}:9-amd64-minimal" \
+            "${REPO}:9-arm64-minimal" \
+            "${REPO}:9-ppc64le-minimal" \
+            "${REPO}:9-s390x-minimal"
 
           # Rocky Linux 9 nonroot manifests.
-          for tag in "9-nonroot" "${MINOR_VERSION_9}-nonroot"; do
-            create_manifest "$tag" \
-              "${REPO}:9-amd64-nonroot" \
-              "${REPO}:9-arm64-nonroot" \
-              "${REPO}:9-ppc64le-nonroot" \
-              "${REPO}:9-s390x-nonroot"
-          done
+          create_manifest_set "${REPO}:9-nonroot" \
+            --tag "${REPO}:9-nonroot" \
+            --tag "${REPO}:${MINOR_VERSION_9}-nonroot" \
+            "${REPO}:9-amd64-nonroot" \
+            "${REPO}:9-arm64-nonroot" \
+            "${REPO}:9-ppc64le-nonroot" \
+            "${REPO}:9-s390x-nonroot"
 
           # Rocky Linux 9 minimal nonroot manifests.
-          for tag in "9-minimal-nonroot" "${MINOR_VERSION_9}-minimal-nonroot"; do
-            create_manifest "$tag" \
-              "${REPO}:9-amd64-minimal-nonroot" \
-              "${REPO}:9-arm64-minimal-nonroot" \
-              "${REPO}:9-ppc64le-minimal-nonroot" \
-              "${REPO}:9-s390x-minimal-nonroot"
-          done
+          create_manifest_set "${REPO}:9-minimal-nonroot" \
+            --tag "${REPO}:9-minimal-nonroot" \
+            --tag "${REPO}:${MINOR_VERSION_9}-minimal-nonroot" \
+            "${REPO}:9-amd64-minimal-nonroot" \
+            "${REPO}:9-arm64-minimal-nonroot" \
+            "${REPO}:9-ppc64le-minimal-nonroot" \
+            "${REPO}:9-s390x-minimal-nonroot"
